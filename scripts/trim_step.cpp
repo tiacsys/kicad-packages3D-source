@@ -6,7 +6,7 @@
  */
 
 #include <algorithm>
-#include <map>
+#include <unordered_map>
 #include <string>
 #include <sstream>
 #include <vector>
@@ -40,55 +40,87 @@ void split(const std::string &s, char delim, Out result) {
 
 int main( int argc, char **argv)
 {
-	size_t last_file_lines = (size_t)-1;
-	size_t file_lines = last_file_lines - 1;
-
 	std::string input_file(argv[1]);
-	std::string output_file(argv[1]);
-	std::ofstream log("Log_file.txt");
+	std::string output_file(argv[2]);
 
-	while( file_lines < last_file_lines )
-//	for(int i = 0; i < 1; i++)
+	std::vector<std::string> in_lines;
+	std::vector<std::string> out_lines;
+
+	std::ifstream is(input_file);
+	
+  	auto n_lines = std::count(std::istreambuf_iterator<char>(is), std::istreambuf_iterator<char>(), '\n') + 1;
+	is.seekg( 0 );
+	in_lines.reserve( n_lines );
+	out_lines.reserve( n_lines );
+
+	std::vector<std::string> footer;
+	std::vector<std::string> header;
+	bool past_header = false;
+	bool past_data = false;
+	bool continuing = false;
+
+	while( is )
+	{
+		std::string line;
+		std::getline( is, line );
+
+		if( past_header )
+		{
+			if( past_data || line.find( "ENDSEC;") != std::string::npos )
+			{
+				past_data = true;
+				footer.emplace_back( line );
+			}
+			else
+			{
+				rtrim(line);
+
+				if( continuing )
+				{
+					if( std::isalpha(line.front()) )
+						out_lines.back().append( " " );
+					
+					out_lines.back() += line;
+				}
+				else
+				{
+					out_lines.emplace_back( line );
+				}
+
+				continuing = ( line.back() != ';' );
+			}			
+		}
+		else
+		{
+			if( line.find( "DATA;") != std::string::npos )
+				past_header = true;
+
+			header.emplace_back( line );
+		}
+		
+	}
+
+	is.close();
+
+
+	std::unordered_map<std::string, unsigned> uniques;
+	std::unordered_map<unsigned, unsigned> lookup;
+	std::regex e ("#([0-9]+)");
+
+	do
 	{
 
-		std::ifstream is(input_file);
+		in_lines = out_lines;
+		out_lines.clear();
+		uniques.clear();
+		lookup.clear();
 
-		std::map<std::string, unsigned> uniques;
-		std::map<unsigned, unsigned> lookup;
-		std::vector<std::string> lines;
-		std::vector<std::string> footer;
-		std::vector<std::string> header;
-
-		bool past_header = false;
-		lines.reserve( 100000 );
-
-		while(is)
+		for( const auto& line : in_lines )
 		{
-			std::string line;
-			std::getline( is, line );
-
-			rtrim(line);
+		
 			std::vector<std::string> elems;
 			split(line, '=', std::back_inserter(elems));
 
-			if( line.front() != '#' || elems.size() != 2 )
-			{
-				std::string is_empty(line);
-				ltrim( is_empty );
-				rtrim( is_empty );
-				if( !is_empty.size() )
-					continue;
-
-				if( !past_header )
-					header.push_back( line );
-				else
-					footer.push_back( line );
-
-				continue;
-			}
-
-			past_header = true;
-			line.clear();
 			// remove the #
 			elems[0].erase(0,1);
 			unsigned oldnum = std::stol(elems[0]);
@@ -96,29 +128,17 @@ int main( int argc, char **argv)
 			ltrim(elems[1]);
 			rtrim(elems[1]);
 
-			while( is && elems[1].back() != ';' )
-			{
-				std::getline( is, line );
-				rtrim(line);
-				ltrim(line);
-				if( std::isalpha(line.front()) )
-					elems[1].append( " " );
-				elems[1].append( line );
-			}
-
-			auto it = uniques.emplace( std::make_pair(elems[1], lines.size() + 1 ) );
+			auto it = uniques.emplace( std::make_pair(elems[1], out_lines.size() + 1 ) );
 
 			while( ( elems[1].find("PRODUCT_DEFINITION") == 0
-					|| elems[1].find("SHAPE_REPRESENTATION") == 0 )&& !it.second )
+					|| elems[1].find("SHAPE_REPRESENTATION") == 0 ) && !it.second )
 			{
 				elems[1].append( " " );
-				it = uniques.emplace( std::make_pair(elems[1], lines.size() + 1 ) );
+				it = uniques.emplace( std::make_pair(elems[1], out_lines.size() + 1 ) );
 			}
 
 			if( !it.second )
 			{
-				log << lines.size() + 1 <<" -> " << it.first->second << " : " << it.first->first << std::endl;
-
 				if( elems[1] != it.first->first )
 					std::cout << "Warning! " << elems[1] << " is not the same as " << it.first->first << std::endl;
 				// didn't insert!
@@ -126,46 +146,55 @@ int main( int argc, char **argv)
 			}
 			else
 			{
-				lookup.emplace( std::make_pair( oldnum, lines.size() + 1 ) );
-				lines.push_back( elems[1] );
+				lookup.emplace( std::make_pair( oldnum, out_lines.size() + 1 ) );
+				out_lines.emplace_back( "#" + std::to_string( out_lines.size() + 1 ) + "=" + elems[1]);
 			}
 		}
 
-		is.close();
-
-		std::cout << "File Lines: " << lines.size() << std::endl;
-
-		std::ofstream os(output_file);
-
-		for( auto line : header )
-			os << line << std::endl;
-
-		for( int x = 1; x <= lines.size(); x++ )
+		for( size_t i = 0; i < out_lines.size(); i++ )
 		{
-			std::string templine( lines[x - 1] );
+			std::vector<std::string> elems;
 			std::smatch m;
-			std::regex e ("#([0-9]+)");
+			auto& line = out_lines[i];
 
-			os << "#" << x << "=";
-			while( std::regex_search( templine, m, e, std::regex_constants::match_not_null) )
+			split(line, '=', std::back_inserter(elems));
+
+			line = elems[0] + "=";
+			
+			while( std::regex_search( elems[1], m, e, std::regex_constants::match_not_null) )
 			{
-				if( m.empty() ) break;
-				unsigned oldval = std::stol(m[1]);
+				if( m.empty() ) 
+					break;
+
+				unsigned oldval = std::stol( m[1] );
 				auto newval = lookup.find( oldval );
-				os << m.prefix() << "#" << newval->second;
-				templine = m.suffix();
+
+				if( newval == lookup.end() )
+					line += ( m.prefix().str() + "#" + m[1].str() );	
+				else
+					line += ( m.prefix().str() + "#" + std::to_string( newval->second ) );
+
+				elems[1] = m.suffix();
 			}
-			if( templine.size() > 0 )
-				os << templine << std::endl;
+
+			if( !elems[1].empty() )
+				line += elems[1];
 		}
 
-		for( auto line : footer )
-			os << line << std::endl;
+	} while( in_lines.size() > out_lines.size() );
 
-		last_file_lines = file_lines;
-		file_lines = lines.size();
+	std::ofstream os(output_file);
 
-		os.close();
-		input_file = output_file;
-	}
-}
+	for( const auto& line : header )
+		os << line << std::endl;
+
+	for( const auto& line : out_lines )
+		os << line << std::endl;
+
+	for( const auto& line : footer )
+		os << line << std::endl;
+
+	os.close();
+
+	std::cout << "Finished: " << input_file << " " << n_lines << " shrunk to " << out_lines.size() + header.size() + footer.size() << std::endl;
+} 
