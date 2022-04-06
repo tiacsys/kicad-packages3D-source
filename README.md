@@ -1,6 +1,6 @@
 # kicad-packages3D-source
 
-This repository contains source files for the 3D models found at https://github.com/KiCad/kicad-packages3d
+This repository contains source files for the 3D models found at https://gitlab.com/kicad/libraries/kicad-packages3D
 
 These source files can be in the form of:
 
